@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor de Contenido Interactivo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+        
+        .toolbar {
+            background-color: #333;
+            color: white;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        button {
+            padding: 8px 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        #canvas-container {
+            position: relative;
+            width: 1920px;
+            height: 1080px;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin: 0 auto;
+        }
+        
+        .draggable {
+            position: absolute;
+            cursor: move;
+            user-select: none;
+            transform-origin: center center;
+        }
+        
+        .draggable img, .draggable video {
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+            object-fit: contain;
+        }
+        
+        .draggable.selected {
+            outline: 2px dashed #4CAF50;
+        }
+        
+        .resize-handle {
+            width: 10px;
+            height: 10px;
+            background-color: #4CAF50;
+            position: absolute;
+            right: -5px;
+            bottom: -5px;
+            cursor: nwse-resize;
+        }
+        
+        .text-element {
+            min-width: 100px;
+            min-height: 30px;
+            padding: 5px;
+            resize: none;
+            border: none;
+            background: transparent;
+            overflow: hidden;
+            outline: none;
+            font-family: inherit;
+            color: #000000;
+            font-size: 16px;
+        }
+        
+        .delete-btn {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 12px;
+            z-index: 10;
+            display: none;
+        }
+        
+        .font-size-controls {
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            display: none;
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+        
+        .font-size-btn {
+            width: 20px;
+            height: 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .draggable:hover .delete-btn,
+        .draggable:hover .font-size-controls {
+            display: flex;
+        }
+        
+        #file-input {
+            display: none;
+        }
+        
+        .zoom-controls {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .zoom-controls button {
+            width: 40px;
+            height: 40px;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .font-size-input {
+            margin-left: 10px;
+            padding: 5px;
+            width: 50px;
+        }
+        
+        .font-size-label {
+            color: white;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button id="add-image">Añadir Imagen</button>
+        <button id="add-video">Añadir Video</button>
+        <button id="add-text">Añadir Texto</button>
+        <button id="delete-selected">Eliminar Seleccionado</button>
+        <button id="preview-canvas">Vista Previa</button>
+        <span class="font-size-label">Tamaño texto:</span>
+        <input type="number" id="font-size-input" class="font-size-input" min="8" max="72" value="16">
+        <span class="font-size-label">px</span>
+        <input type="file" id="file-input" accept="image/*,video/*">
+    </div>
+    
+    <div id="canvas-container"></div>
+    
+    <div class="zoom-controls">
+        <button id="zoom-in">+</button>
+        <button id="zoom-out">-</button>
+        <button id="reset-zoom">100%</button>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const canvas = document.getElementById('canvas-container');
+            const fileInput = document.getElementById('file-input');
+            const fontSizeInput = document.getElementById('font-size-input');
+            let selectedElement = null;
+            let isDragging = false;
+            let isResizing = false;
+            let startX, startY, startLeft, startTop, startWidth, startHeight;
+            let currentScale = 1;
+            let aspectRatio = 1;
+            let currentFontSize = 16;
+            let previewWindow = null;
+            let previewUpdateInterval = null;
+            
+            // Función para abrir vista previa
+            function openPreview() {
+                if (previewWindow && !previewWindow.closed) {
+                    previewWindow.focus();
+                    return;
+                }
+                
+                previewWindow = window.open('', '_blank', 'width=1920,height=1080,scrollbars=yes');
+                
+                // Configurar la estructura básica de la vista previa
+                previewWindow.document.write(`
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Vista Previa del Lienzo</title>
+                        <style>
+                            body {
+                                margin: 0;
+                                padding: 0;
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                background-color: #f0f0f0;
+                                height: 100vh;
+                                overflow: auto;
+                            }
+                            #preview-canvas {
+                                width: 1920px;
+                                height: 1080px;
+                                background-color: white;
+                                box-shadow: 0 0 20px rgba(0,0,0,0.3);
+                                position: relative;
+                                overflow: hidden;
+                            }
+                            .preview-element {
+                                position: absolute;
+                            }
+                            .preview-element img, .preview-element video {
+                                max-width: 100%;
+                                max-height: 100%;
+                                display: block;
+                                object-fit: contain;
+                            }
+                            .preview-text {
+                                border: none;
+                                background: transparent;
+                                resize: none;
+                                outline: none;
+                                pointer-events: none;
+                                font-family: Arial, sans-serif;
+                                color: #000000;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div id="preview-canvas"></div>
+                    </body>
+                    </html>
+                `);
+                previewWindow.document.close();
+                
+                // Actualizar la vista previa inicialmente
+                updatePreview();
+                
+                // Configurar actualización periódica
+                previewUpdateInterval = setInterval(updatePreview, 100);
+                
+                // Verificar si la ventana se cerró
+                const checkWindowClosed = setInterval(() => {
+                    if (previewWindow.closed) {
+                        clearInterval(previewUpdateInterval);
+                        clearInterval(checkWindowClosed);
+                    }
+                }, 100);
+            }
+            
+            // Función para actualizar la vista previa
+            function updatePreview() {
+                if (previewWindow && !previewWindow.closed) {
+                    try {
+                        // Limpiar el canvas de vista previa
+                        previewWindow.document.getElementById('preview-canvas').innerHTML = '';
+                        
+                        // Clonar todos los elementos del canvas principal
+                        const elements = canvas.querySelectorAll('.draggable');
+                        elements.forEach(element => {
+                            const clone = element.cloneNode(true);
+                            
+                            // Copiar estilos importantes
+                            clone.style.left = element.style.left;
+                            clone.style.top = element.style.top;
+                            clone.style.width = element.style.width;
+                            clone.style.height = element.style.height;
+                            
+                            // Eliminar controles interactivos
+                            clone.querySelectorAll('.delete-btn, .resize-handle, .font-size-controls').forEach(el => el.remove());
+                            clone.classList.remove('selected');
+                            
+                            // Cambiar clases para la vista previa
+                            clone.className = 'preview-element';
+                            if (clone.querySelector('.text-element')) {
+                                clone.querySelector('.text-element').className = 'preview-text';
+                            }
+                            
+                            previewWindow.document.getElementById('preview-canvas').appendChild(clone);
+                        });
+                    } catch (e) {
+                        console.error('Error updating preview:', e);
+                    }
+                }
+            }
+            
+            // Vista previa
+            document.getElementById('preview-canvas').addEventListener('click', openPreview);
+            
+            // Control de tamaño de fuente
+            fontSizeInput.addEventListener('change', function() {
+                currentFontSize = parseInt(this.value);
+                if (selectedElement && selectedElement.querySelector('.text-element')) {
+                    selectedElement.querySelector('.text-element').style.fontSize = currentFontSize + 'px';
+                    const textarea = selectedElement.querySelector('.text-element');
+                    textarea.style.height = 'auto';
+                    textarea.style.height = (textarea.scrollHeight) + 'px';
+                    updatePreview();
+                }
+            });
+            
+            // Añadir imagen
+            document.getElementById('add-image').addEventListener('click', function() {
+                fileInput.accept = 'image/*';
+                fileInput.onchange = function(e) {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = function(event) {
+                            createImageElement(event.target.result);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+                fileInput.click();
+            });
+            
+            // Añadir video
+            document.getElementById('add-video').addEventListener('click', function() {
+                fileInput.accept = 'video/*';
+                fileInput.onchange = function(e) {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = function(event) {
+                            createVideoElement(event.target.result);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+                fileInput.click();
+            });
+            
+            // Añadir texto
+            document.getElementById('add-text').addEventListener('click', function() {
+                createTextElement();
+            });
+            
+            // Eliminar elemento seleccionado
+            document.getElementById('delete-selected').addEventListener('click', function() {
+                if (selectedElement) {
+                    selectedElement.remove();
+                    selectedElement = null;
+                    updatePreview();
+                }
+            });
+            
+            // Controles de zoom
+            document.getElementById('zoom-in').addEventListener('click', function() {
+                currentScale *= 1.1;
+                updateCanvasScale();
+            });
+            
+            document.getElementById('zoom-out').addEventListener('click', function() {
+                currentScale /= 1.1;
+                updateCanvasScale();
+            });
+            
+            document.getElementById('reset-zoom').addEventListener('click', function() {
+                currentScale = 1;
+                updateCanvasScale();
+            });
+            
+            function updateCanvasScale() {
+                canvas.style.transform = `scale(${currentScale})`;
+                canvas.style.transformOrigin = 'top left';
+            }
+            
+            function createImageElement(src) {
+                const imgContainer = document.createElement('div');
+                imgContainer.className = 'draggable';
+                
+                const img = document.createElement('img');
+                img.src = src;
+                
+                img.onload = function() {
+                    aspectRatio = img.naturalWidth / img.naturalHeight;
+                    imgContainer.dataset.aspectRatio = aspectRatio;
+                    imgContainer.style.width = '200px';
+                    imgContainer.style.height = (200 / aspectRatio) + 'px';
+                    updatePreview();
+                };
+                
+                const deleteBtn = document.createElement('div');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.innerHTML = '×';
+                deleteBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    imgContainer.remove();
+                    updatePreview();
+                });
+                
+                imgContainer.appendChild(img);
+                imgContainer.appendChild(deleteBtn);
+                
+                imgContainer.style.left = (canvas.offsetWidth / 2 - 100) + 'px';
+                imgContainer.style.top = (canvas.offsetHeight / 2 - 100) + 'px';
+                
+                setupElementInteractions(imgContainer);
+                canvas.appendChild(imgContainer);
+                selectElement(imgContainer);
+            }
+            
+            function createVideoElement(src) {
+                const videoContainer = document.createElement('div');
+                videoContainer.className = 'draggable';
+                
+                const video = document.createElement('video');
+                video.src = src;
+                video.controls = true;
+                
+                video.onloadedmetadata = function() {
+                    aspectRatio = video.videoWidth / video.videoHeight;
+                    videoContainer.dataset.aspectRatio = aspectRatio;
+                    videoContainer.style.width = '320px';
+                    videoContainer.style.height = (320 / aspectRatio) + 'px';
+                    updatePreview();
+                };
+                
+                const deleteBtn = document.createElement('div');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.innerHTML = '×';
+                deleteBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    videoContainer.remove();
+                    updatePreview();
+                });
+                
+                videoContainer.appendChild(video);
+                videoContainer.appendChild(deleteBtn);
+                
+                videoContainer.style.left = (canvas.offsetWidth / 2 - 160) + 'px';
+                videoContainer.style.top = (canvas.offsetHeight / 2 - 90) + 'px';
+                
+                setupElementInteractions(videoContainer);
+                canvas.appendChild(videoContainer);
+                selectElement(videoContainer);
+            }
+            
+            function createTextElement() {
+                const textContainer = document.createElement('div');
+                textContainer.className = 'draggable';
+                
+                const textarea = document.createElement('textarea');
+                textarea.className = 'text-element';
+                textarea.placeholder = 'Escribe tu texto aquí...';
+                textarea.value = 'Texto editable';
+                textarea.style.fontSize = currentFontSize + 'px';
+                
+                const deleteBtn = document.createElement('div');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.innerHTML = '×';
+                deleteBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    textContainer.remove();
+                    updatePreview();
+                });
+                
+                const fontSizeControls = document.createElement('div');
+                fontSizeControls.className = 'font-size-controls';
+                
+                const increaseFontBtn = document.createElement('button');
+                increaseFontBtn.className = 'font-size-btn';
+                increaseFontBtn.innerHTML = '+';
+                increaseFontBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    currentFontSize = Math.min(72, currentFontSize + 2);
+                    textarea.style.fontSize = currentFontSize + 'px';
+                    fontSizeInput.value = currentFontSize;
+                    textarea.style.height = 'auto';
+                    textarea.style.height = (textarea.scrollHeight) + 'px';
+                    updatePreview();
+                });
+                
+                const decreaseFontBtn = document.createElement('button');
+                decreaseFontBtn.className = 'font-size-btn';
+                decreaseFontBtn.innerHTML = '-';
+                decreaseFontBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    currentFontSize = Math.max(8, currentFontSize - 2);
+                    textarea.style.fontSize = currentFontSize + 'px';
+                    fontSizeInput.value = currentFontSize;
+                    textarea.style.height = 'auto';
+                    textarea.style.height = (textarea.scrollHeight) + 'px';
+                    updatePreview();
+                });
+                
+                fontSizeControls.appendChild(decreaseFontBtn);
+                fontSizeControls.appendChild(increaseFontBtn);
+                
+                textContainer.appendChild(textarea);
+                textContainer.appendChild(deleteBtn);
+                textContainer.appendChild(fontSizeControls);
+                
+                textContainer.style.left = (canvas.offsetWidth / 2 - 100) + 'px';
+                textContainer.style.top = (canvas.offsetHeight / 2 - 15) + 'px';
+                textContainer.style.width = '200px';
+                
+                setupElementInteractions(textContainer);
+                canvas.appendChild(textContainer);
+                selectElement(textContainer);
+                
+                textarea.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = (this.scrollHeight) + 'px';
+                    updatePreview();
+                });
+                
+                textarea.dispatchEvent(new Event('input'));
+            }
+            
+            function setupElementInteractions(element) {
+                element.addEventListener('mousedown', function(e) {
+                    e.stopPropagation();
+                    selectElement(this);
+                    
+                    if (e.target === this || e.target === this.querySelector('img') || 
+                        e.target === this.querySelector('video') || e.target === this.querySelector('textarea')) {
+                        isDragging = true;
+                        startX = e.clientX;
+                        startY = e.clientY;
+                        startLeft = parseInt(this.style.left) || 0;
+                        startTop = parseInt(this.style.top) || 0;
+                        
+                        if (e.target.tagName !== 'TEXTAREA') {
+                            e.preventDefault();
+                        }
+                    }
+                });
+                
+                const resizeHandle = document.createElement('div');
+                resizeHandle.className = 'resize-handle';
+                element.appendChild(resizeHandle);
+                
+                resizeHandle.addEventListener('mousedown', function(e) {
+                    e.stopPropagation();
+                    isResizing = true;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    startWidth = parseInt(element.style.width) || element.offsetWidth;
+                    startHeight = parseInt(element.style.height) || element.offsetHeight;
+                    
+                    if (element.dataset.aspectRatio) {
+                        aspectRatio = parseFloat(element.dataset.aspectRatio);
+                    } else if (element.querySelector('.text-element')) {
+                        aspectRatio = null;
+                    } else {
+                        aspectRatio = startWidth / startHeight;
+                    }
+                });
+            }
+            
+            function selectElement(element) {
+                if (selectedElement) {
+                    selectedElement.classList.remove('selected');
+                }
+                
+                selectedElement = element;
+                selectedElement.classList.add('selected');
+                
+                if (selectedElement.querySelector('.text-element')) {
+                    const textElement = selectedElement.querySelector('.text-element');
+                    const fontSize = parseInt(window.getComputedStyle(textElement).fontSize);
+                    fontSizeInput.value = fontSize;
+                    currentFontSize = fontSize;
+                }
+            }
+            
+            // Manejar el arrastre y redimensionamiento del elemento
+            document.addEventListener('mousemove', function(e) {
+                if (!isDragging && !isResizing) return;
+                
+                if (isDragging && selectedElement) {
+                    const dx = e.clientX - startX;
+                    const dy = e.clientY - startY;
+                    
+                    selectedElement.style.left = (startLeft + dx / currentScale) + 'px';
+                    selectedElement.style.top = (startTop + dy / currentScale) + 'px';
+                }
+                
+                if (isResizing && selectedElement) {
+                    const dx = e.clientX - startX;
+                    
+                    if (aspectRatio) {
+                        const newWidth = startWidth + dx / currentScale;
+                        const newHeight = newWidth / aspectRatio;
+                        
+                        selectedElement.style.width = Math.max(50, newWidth) + 'px';
+                        selectedElement.style.height = Math.max(30, newHeight) + 'px';
+                    } else {
+                        const newWidth = startWidth + dx / currentScale;
+                        selectedElement.style.width = Math.max(50, newWidth) + 'px';
+                    }
+                }
+                
+                // Actualización en tiempo real
+                updatePreview();
+            });
+            
+            document.addEventListener('mouseup', function() {
+                isDragging = false;
+                isResizing = false;
+            });
+            
+            canvas.addEventListener('mousedown', function(e) {
+                if (e.target === canvas) {
+                    if (selectedElement) {
+                        selectedElement.classList.remove('selected');
+                        selectedElement = null;
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
